@@ -1,9 +1,8 @@
 /** @odoo-module **/
 console.log("hehhee boi");
 
-/** @odoo-module **/
 import { registry } from "@web/core/registry";
-import { Component, onMounted, useState } from "@odoo/owl";
+import { Component, onMounted, onWillStart, useState } from "@odoo/owl";
 
 // JSON-RPC fetch functions
 async function fetchProjects() {
@@ -141,6 +140,7 @@ async function fetchJournalItemsByPartner(partnerId) {
                     args: [[["partner_id", "=", partnerId]]],
                     kwargs: {
                         fields: [
+                            "id", // Ensure we get the id field
                             "date",
                             "move_name",
                             "account_id",
@@ -169,33 +169,6 @@ async function fetchJournalItemsByPartner(partnerId) {
     }
 }
 
-function renderJournalTable(journalItems) {
-    const tableBody = document.querySelector("#journal-table-body");
-    tableBody.innerHTML = "";
-
-    if (!journalItems.length) {
-        const row = document.createElement("tr");
-        row.innerHTML = `<td colspan="8" style="text-align:center;">No records found</td>`;
-        tableBody.appendChild(row);
-        return;
-    }
-
-    journalItems.forEach((item) => {
-        const row = document.createElement("tr");
-        row.innerHTML = `
-            <td>${item.date || ""}</td>
-            <td>${item.move_name || ""}</td>
-            <td>${item.partner_id ? item.partner_id[1] : "—"}</td>
-            <td class="project-col">${item.project_id ? item.project_id[1] : "—"}</td>
-            <td>${item.currency_id ? item.currency_id[1] : ""}</td>
-            <td>${item.debit || 0}</td>
-            <td>${item.credit || 0}</td>
-            <td>${item.balance ?? item.debit - item.credit}</td>
-        `;
-        tableBody.appendChild(row);
-    });
-}
-
 async function fetchJournalItemsByProject(projectId) {
     try {
         const res = await fetch("/web/dataset/call_kw/account.move.line/search_read", {
@@ -213,6 +186,7 @@ async function fetchJournalItemsByProject(projectId) {
                     args: [[["project_id", "=", projectId]]],
                     kwargs: {
                         fields: [
+                            "id", // Ensure we get the id field
                             "date",
                             "move_name",
                             "partner_id",
@@ -272,6 +246,7 @@ async function fetchJournalItemsByDateRange(startDate, endDate, partnerId = null
                     args: [domain],
                     kwargs: {
                         fields: [
+                            "id", // Ensure we get the id field
                             "date",
                             "move_name",
                             "account_id",
@@ -413,6 +388,128 @@ function generatePDFFromTable(journalItems, dateText, filters = {}) {
     pdfWindow.document.close();
 }
 
+// Excel Generation Function
+function generateExcelFromTable(journalItems, dateText, filters = {}) {
+    try {
+        // Check if SheetJS is available
+        if (typeof XLSX === 'undefined') {
+            alert('Excel export library not loaded. Please contact administrator.');
+            return;
+        }
+
+        // Create workbook and worksheet
+        const wb = XLSX.utils.book_new();
+        const wsData = [];
+
+        // Add header information
+        wsData.push(['Falcon General Ledger Report']);
+        wsData.push(['Generated on: ' + new Date().toLocaleDateString()]);
+        wsData.push([]);
+        wsData.push(['Report Period: ' + dateText]);
+
+        // Add filter information
+        if (filters.partnerName || filters.projectName) {
+            wsData.push([]);
+            wsData.push(['Filters:']);
+            if (filters.partnerName) {
+                wsData.push(['Partner: ' + filters.partnerName]);
+            }
+            if (filters.projectName) {
+                wsData.push(['Project: ' + filters.projectName]);
+            }
+        }
+
+        wsData.push([]);
+
+        // Add column headers
+        wsData.push(['Date', 'Communication', 'Partner', 'Project', 'Currency', 'Debit', 'Credit', 'Balance']);
+
+        // Add data rows
+        journalItems.forEach(item => {
+            wsData.push([
+                item.date || '',
+                item.move_name || item.name || '',
+                item.partner_id ? item.partner_id[1] : '—',
+                item.project_id ? item.project_id[1] : '—',
+                item.currency_id ? item.currency_id[1] : '',
+                item.debit || 0,
+                item.credit || 0,
+                item.balance !== undefined ? item.balance : (item.debit || 0) - (item.credit || 0)
+            ]);
+        });
+
+        // Add totals row
+        const totalDebit = journalItems.reduce((sum, item) => sum + (item.debit || 0), 0);
+        const totalCredit = journalItems.reduce((sum, item) => sum + (item.credit || 0), 0);
+        const totalBalance = journalItems.reduce((sum, item) => sum + (item.balance !== undefined ? item.balance : (item.debit || 0) - (item.credit || 0)), 0);
+
+        wsData.push([]);
+        wsData.push(['TOTAL', '', '', '', '', totalDebit, totalCredit, totalBalance]);
+
+        // Create worksheet
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+        // Set column widths
+        if (!ws['!cols']) ws['!cols'] = [];
+        const colWidths = [12, 25, 20, 20, 12, 12, 12, 12];
+        colWidths.forEach((width, index) => {
+            ws['!cols'][index] = { width: width };
+        });
+
+        // Apply basic styling to header row (row 9, since we have 8 header rows)
+        const headerRow = 9;
+        'ABCDEFGH'.split('').forEach(col => {
+            const cellAddress = col + headerRow;
+            if (ws[cellAddress]) {
+                ws[cellAddress].s = {
+                    font: { bold: true, color: { rgb: 'FFFFFF' } },
+                    fill: { fgColor: { rgb: '4472C4' } },
+                    alignment: { horizontal: 'center' }
+                };
+            }
+        });
+
+        // Apply number formatting to debit, credit, and balance columns
+        journalItems.forEach((_, index) => {
+            const row = headerRow + index + 1;
+            ['F', 'G', 'H'].forEach(col => {
+                const cellAddress = col + row;
+                if (ws[cellAddress]) {
+                    ws[cellAddress].z = '#,##0.00';
+                }
+            });
+        });
+
+        // Format total row
+        const totalRow = headerRow + journalItems.length + 1;
+        'ABCDEFGH'.split('').forEach(col => {
+            const cellAddress = col + totalRow;
+            if (ws[cellAddress]) {
+                ws[cellAddress].s = {
+                    font: { bold: true },
+                    fill: { fgColor: { rgb: 'F2F2F2' } }
+                };
+                if (['F', 'G', 'H'].includes(col)) {
+                    ws[cellAddress].z = '#,##0.00';
+                }
+            }
+        });
+
+        // Add worksheet to workbook
+        XLSX.utils.book_append_sheet(wb, ws, 'General Ledger');
+
+        // Generate filename
+        const filename = `General_Ledger_${dateText.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
+
+        // Save the file
+        XLSX.writeFile(wb, filename);
+
+    } catch (error) {
+        console.error('Error generating Excel file:', error);
+        alert('Error generating Excel file. Please try again.');
+    }
+}
+
 // Component Definition
 export class FalconGeneralLedger extends Component {
     setup() {
@@ -424,106 +521,108 @@ export class FalconGeneralLedger extends Component {
             showDatePicker: false,
             selectedPartner: null,
             selectedProject: null,
-            currentJournalItems: [] // Store current journal items for PDF
+            currentJournalItems: [], // Store current journal items for export
+            tableData: [], // For template rendering
+            isLoading: true
         });
 
-        onMounted(async () => {
-            // Initial load with current month data
+        onWillStart(async () => {
             await this.loadJournalItems();
-
-            const salesOrders = await fetchSaleOrders();
-            const invoices = await fetchInvoices();
-            console.log("All Sales Orders:", salesOrders);
-            console.log("All Invoices:", invoices);
-
-            // Toggle extra columns
-            const toggleBtn = document.getElementById("toggle-btn");
-            const extraCols = document.querySelectorAll(".col-extra");
-            const partnerRow = document.querySelector(".partner-row");
-            let expanded = true;
-
-            if (toggleBtn) {
-                toggleBtn.addEventListener("click", () => {
-                    expanded = !expanded;
-
-                    extraCols.forEach((col) => {
-                        col.style.display = expanded ? "" : "none";
-                    });
-
-                    if (partnerRow) {
-                        partnerRow.style.display = expanded ? "none" : "";
-                    }
-
-                    toggleBtn.textContent = expanded ? "Show Less ▲" : "Show More ▼";
-                });
-            }
-
-            // Projects and Partners buttons logic
-            const projectsBtn = document.getElementById("projects-btn");
-            const partnersBtn = document.getElementById("partners-btn");
-            const projectsInput = document.getElementById("projects-input");
-            const partnersInput = document.getElementById("partners-input");
-
-            if (projectsBtn && partnersBtn && projectsInput && partnersInput) {
-                // Projects
-                projectsBtn.addEventListener("click", async () => {
-                    const isVisible = projectsInput.style.display === "block";
-                    projectsInput.style.display = isVisible ? "none" : "block";
-                    partnersInput.style.display = "none";
-
-                    if (!isVisible) {
-                        projectsInput.innerHTML = '<option value="">Select Project</option>';
-                        try {
-                            const projects = await fetchProjects();
-                            projects.forEach((proj) => {
-                                const option = document.createElement("option");
-                                option.value = proj.id;
-                                option.textContent = proj.name;
-                                projectsInput.appendChild(option);
-                            });
-                        } catch (error) {
-                            console.error("Failed to fetch projects:", error);
-                        }
-                    }
-                });
-
-                projectsInput.addEventListener("change", async (e) => {
-                    const projectId = parseInt(e.target.value);
-                    if (projectId) {
-                        await this.handleProjectSelect(projectId);
-                    }
-                });
-
-                // Partners
-                partnersBtn.addEventListener("click", async () => {
-                    const isVisible = partnersInput.style.display === "block";
-                    partnersInput.style.display = isVisible ? "none" : "block";
-                    projectsInput.style.display = "none";
-
-                    if (!isVisible) {
-                        partnersInput.innerHTML = '<option value="">Select Partner</option>';
-                        try {
-                            const partners = await fetchPartners();
-                            partners.forEach((partner) => {
-                                const option = document.createElement("option");
-                                option.value = partner.id;
-                                option.textContent = partner.name;
-                                partnersInput.appendChild(option);
-                            });
-                        } catch (error) {
-                            console.error("Failed to fetch partners:", error);
-                        }
-                    }
-                });
-
-                partnersInput.addEventListener("change", async (e) => {
-                    const partnerId = parseInt(e.target.value);
-                    if (partnerId) {
-                        await this.handlePartnerSelect(partnerId);
-                    }
-                });
-            }
         });
+
+        onMounted(() => {
+            this.setupEventListeners();
+        });
+    }
+
+    setupEventListeners() {
+        // Toggle extra columns
+        const toggleBtn = document.getElementById("toggle-btn");
+        const extraCols = document.querySelectorAll(".col-extra");
+        const partnerRow = document.querySelector(".partner-row");
+        let expanded = true;
+
+        if (toggleBtn) {
+            toggleBtn.addEventListener("click", () => {
+                expanded = !expanded;
+
+                extraCols.forEach((col) => {
+                    col.style.display = expanded ? "" : "none";
+                });
+
+                if (partnerRow) {
+                    partnerRow.style.display = expanded ? "none" : "";
+                }
+
+                toggleBtn.textContent = expanded ? "Show Less ▲" : "Show More ▼";
+            });
+        }
+
+        // Projects and Partners buttons logic
+        const projectsBtn = document.getElementById("projects-btn");
+        const partnersBtn = document.getElementById("partners-btn");
+        const projectsInput = document.getElementById("projects-input");
+        const partnersInput = document.getElementById("partners-input");
+
+        if (projectsBtn && partnersBtn && projectsInput && partnersInput) {
+            // Projects
+            projectsBtn.addEventListener("click", async () => {
+                const isVisible = projectsInput.style.display === "block";
+                projectsInput.style.display = isVisible ? "none" : "block";
+                partnersInput.style.display = "none";
+
+                if (!isVisible) {
+                    projectsInput.innerHTML = '<option value="">Select Project</option>';
+                    try {
+                        const projects = await fetchProjects();
+                        projects.forEach((proj) => {
+                            const option = document.createElement("option");
+                            option.value = proj.id;
+                            option.textContent = proj.name;
+                            projectsInput.appendChild(option);
+                        });
+                    } catch (error) {
+                        console.error("Failed to fetch projects:", error);
+                    }
+                }
+            });
+
+            projectsInput.addEventListener("change", async (e) => {
+                const projectId = parseInt(e.target.value);
+                if (projectId) {
+                    await this.handleProjectSelect(projectId);
+                }
+            });
+
+            // Partners
+            partnersBtn.addEventListener("click", async () => {
+                const isVisible = partnersInput.style.display === "block";
+                partnersInput.style.display = isVisible ? "none" : "block";
+                projectsInput.style.display = "none";
+
+                if (!isVisible) {
+                    partnersInput.innerHTML = '<option value="">Select Partner</option>';
+                    try {
+                        const partners = await fetchPartners();
+                        partners.forEach((partner) => {
+                            const option = document.createElement("option");
+                            option.value = partner.id;
+                            option.textContent = partner.name;
+                            partnersInput.appendChild(option);
+                        });
+                    } catch (error) {
+                        console.error("Failed to fetch partners:", error);
+                    }
+                }
+            });
+
+            partnersInput.addEventListener("change", async (e) => {
+                const partnerId = parseInt(e.target.value);
+                if (partnerId) {
+                    await this.handlePartnerSelect(partnerId);
+                }
+            });
+        }
     }
 
     // Helper functions for date handling
@@ -677,30 +776,67 @@ export class FalconGeneralLedger extends Component {
         }
     }
 
+    // Excel Generation Method
+    async generateExcel() {
+        try {
+            if (this.state.currentJournalItems.length === 0) {
+                alert("No data available to generate Excel file.");
+                return;
+            }
+
+            // Get current filter information
+            const filters = {
+                dateRange: this.state.dateText
+            };
+
+            // Add partner/project filter info if applicable
+            if (this.state.selectedPartner) {
+                const partners = await fetchPartners();
+                const currentPartner = partners.find(p => p.id === this.state.selectedPartner);
+                filters.partnerName = currentPartner ? currentPartner.name : 'Unknown Partner';
+            }
+
+            if (this.state.selectedProject) {
+                const projects = await fetchProjects();
+                const currentProject = projects.find(p => p.id === this.state.selectedProject);
+                filters.projectName = currentProject ? currentProject.name : 'Unknown Project';
+            }
+
+            // Generate Excel file
+            generateExcelFromTable(this.state.currentJournalItems, this.state.dateText, filters);
+
+        } catch (error) {
+            console.error('Error generating Excel file:', error);
+            alert('Error generating Excel file. Please try again.');
+        }
+    }
+
     // Load journal items based on current filters
     async loadJournalItems() {
+        this.state.isLoading = true;
         let journalItems = [];
 
-        if (this.state.selectedPartner) {
-            journalItems = await fetchJournalItemsByPartner(this.state.selectedPartner);
-        } else if (this.state.selectedProject) {
-            journalItems = await fetchJournalItemsByProject(this.state.selectedProject);
-        } else {
-            journalItems = await fetchJournalItemsByDateRange(
-                this.state.startDate,
-                this.state.endDate
-            );
-        }
+        try {
+            if (this.state.selectedPartner) {
+                journalItems = await fetchJournalItemsByPartner(this.state.selectedPartner);
+            } else if (this.state.selectedProject) {
+                journalItems = await fetchJournalItemsByProject(this.state.selectedProject);
+            } else {
+                journalItems = await fetchJournalItemsByDateRange(
+                    this.state.startDate,
+                    this.state.endDate
+                );
+            }
 
-        // Store current journal items for PDF generation
-        this.state.currentJournalItems = journalItems;
+            // Store current journal items for export generation
+            this.state.currentJournalItems = journalItems;
+            this.state.tableData = journalItems;
 
-        renderJournalTable(journalItems);
-
-        // Update table header with current date range
-        const tableHeader = document.querySelector("th.text-center");
-        if (tableHeader) {
-            tableHeader.textContent = this.state.dateText;
+        } catch (error) {
+            console.error('Error loading journal items:', error);
+            this.state.tableData = [];
+        } finally {
+            this.state.isLoading = false;
         }
     }
 
