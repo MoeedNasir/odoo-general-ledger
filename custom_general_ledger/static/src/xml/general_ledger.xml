@@ -5,8 +5,8 @@
             <!-- Header Buttons -->
             <div class="o_falcon_header d-flex align-items-center justify-content-between mb-3 p-3" style="background-color: #fff;">
                 <div class="d-flex">
-                    <button class="btn btn-sm btn-primary me-2"  t-on-click="generatePDF">PDF</button>
-                    <button class="btn btn-sm btn-secondary me-3">XLSX</button>
+                    <button class="btn btn-sm btn-primary me-2" t-on-click="generatePDF">PDF</button>
+                    <button class="btn btn-sm btn-secondary me-3" t-on-click="generateExcel">XLSX</button>
                     <h4 style="margin-left:5px;">General Ledger</h4>
                 </div>
                 <div>
@@ -59,7 +59,7 @@
                 <table class="table table-bordered text-center align-middle" style="width:50%;">
                     <thead class="table-light">
                         <tr>
-                            <th colspan="8" class="text-center">Sep 2025</th>
+                            <th colspan="8" class="text-center" t-esc="state.dateText">Sep 2025</th>
                         </tr>
                         <tr id="header-row">
                             <th class="col-extra">Date</th>
@@ -73,10 +73,30 @@
                         </tr>
                     </thead>
                     <tbody id="journal-table-body">
-                        <!-- Rows will be dynamically inserted here -->
-                        <tr>
-                            <td colspan="7" class="text-center">Select a Partner/Project to load Journal Entries</td>
-                        </tr>
+                        <t t-if="state.isLoading">
+                            <tr>
+                                <td colspan="8" class="text-center">Loading...</td>
+                            </tr>
+                        </t>
+                        <t t-elif="state.tableData.length === 0">
+                            <tr>
+                                <td colspan="8" class="text-center">Select a Partner/Project to load Journal Entries</td>
+                            </tr>
+                        </t>
+                        <t t-else="">
+                            <t t-foreach="state.tableData" t-as="item" t-key="item.id">
+                                <tr>
+                                    <td t-esc="item.date or ''"/>
+                                    <td t-esc="item.move_name or item.name or ''"/>
+                                    <td t-esc="item.partner_id ? item.partner_id[1] : '—'"/>
+                                    <td class="project-col" t-esc="item.project_id ? item.project_id[1] : '—'"/>
+                                    <td t-esc="item.currency_id ? item.currency_id[1] : ''"/>
+                                    <td t-esc="item.debit || 0"/>
+                                    <td t-esc="item.credit || 0"/>
+                                    <td t-esc="item.balance !== undefined ? item.balance : (item.debit || 0) - (item.credit || 0)"/>
+                                </tr>
+                            </t>
+                        </t>
                     </tbody>
                 </table>
             </div>
